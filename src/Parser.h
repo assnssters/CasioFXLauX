@@ -2,123 +2,112 @@
 #define PARSER_H
 
 #include "Lexer.h"
-#include <memory> // For std::unique_ptr
 #include <vector>
+#include <string>
 #include <map>
+#include <memory> // For std::unique_ptr
 
 // --- AST Node Definitions ---
-// Lớp cơ sở cho tất cả các nút AST
-class ASTNode {
-public:
+// Base class for all Abstract Syntax Tree nodes
+struct ASTNode {
     enum class NodeType {
         Program,
         VarDeclaration,
         Assignment,
-        BinaryOp,
         IntegerLiteral,
+        BinaryOp,
         Identifier,
-        MemWrite,
-        MemRead,
-        PrintChar,
-        // ... thêm các loại nút khác
+        MemWrite, // New node type for memory write
+        MemRead,  // New node type for memory read
+        PrintChar // New node type for print_char
     };
     NodeType type;
-    explicit ASTNode(NodeType t) : type(t) {}
     virtual ~ASTNode() = default;
 };
 
-// Nút cho Chương trình (Program)
-class ProgramNode : public ASTNode {
-public:
+// Program node (root of the AST)
+struct ProgramNode : public ASTNode {
     std::vector<std::unique_ptr<ASTNode>> statements;
-    ProgramNode() : ASTNode(NodeType::Program) {}
+    ProgramNode() { type = NodeType::Program; }
 };
 
-// Nút cho Khai báo biến (VAR identifier;)
-class VarDeclarationNode : public ASTNode {
-public:
+// Variable Declaration node
+struct VarDeclarationNode : public ASTNode {
     std::string var_name;
-    explicit VarDeclarationNode(std::string name) : ASTNode(NodeType::VarDeclaration), var_name(std::move(name)) {}
+    VarDeclarationNode(std::string name) : var_name(std::move(name)) { type = NodeType::VarDeclaration; }
 };
 
-// Nút cho Gán giá trị (identifier = expression;)
-class AssignmentNode : public ASTNode {
-public:
+// Assignment node: var_name = expression
+struct AssignmentNode : public ASTNode {
     std::string var_name;
     std::unique_ptr<ASTNode> expression;
     AssignmentNode(std::string name, std::unique_ptr<ASTNode> expr)
-        : ASTNode(NodeType::Assignment), var_name(std::move(name)), expression(std::move(expr)) {}
+        : var_name(std::move(name)), expression(std::move(expr)) { type = NodeType::Assignment; }
 };
 
-// Nút cho Phép toán hai ngôi (expression op expression)
-class BinaryOpNode : public ASTNode {
-public:
-    TokenType op; // PLUS, MINUS
+// Integer Literal node (e.g., 10, 255)
+struct IntegerLiteralNode : public ASTNode {
+    unsigned int value;
+    IntegerLiteralNode(unsigned int val) : value(val) { type = NodeType::IntegerLiteral; }
+};
+
+// Binary Operation node (e.g., a + b, x - y)
+struct BinaryOpNode : public ASTNode {
+    TokenType op; // PLUS, MINUS, MULT, DIV
     std::unique_ptr<ASTNode> left;
     std::unique_ptr<ASTNode> right;
     BinaryOpNode(TokenType op_type, std::unique_ptr<ASTNode> l, std::unique_ptr<ASTNode> r)
-        : ASTNode(NodeType::BinaryOp), op(op_type), left(std::move(l)), right(std::move(r)) {}
+        : op(op_type), left(std::move(l)), right(std::move(r)) { type = NodeType::BinaryOp; }
 };
 
-// Nút cho Số nguyên (10, 5)
-class IntegerLiteralNode : public ASTNode {
-public:
-    int value;
-    explicit IntegerLiteralNode(int val) : ASTNode(NodeType::IntegerLiteral), value(val) {}
-};
-
-// Nút cho Tên biến (my_var, counter)
-class IdentifierNode : public ASTNode {
-public:
+// Identifier node (variable name)
+struct IdentifierNode : public ASTNode {
     std::string name;
-    explicit IdentifierNode(std::string n) : ASTNode(NodeType::Identifier), name(std::move(n)) {}
+    IdentifierNode(std::string var_name) : name(std::move(var_name)) { type = NodeType::Identifier; }
 };
 
-// Nút cho MEM_WRITE(addr, value)
-class MemWriteNode : public ASTNode {
-public:
+// Memory Write node: [address_expr] = value_expr
+struct MemWriteNode : public ASTNode {
     std::unique_ptr<ASTNode> address_expr;
     std::unique_ptr<ASTNode> value_expr;
-    MemWriteNode(std::unique_ptr<ASTNode> addr, std::unique_ptr<ASTNode> val)
-        : ASTNode(NodeType::MemWrite), address_expr(std::move(addr)), value_expr(std::move(val)) {}
+    MemWriteNode(std::unique_ptr<ASTNode> addr_expr, std::unique_ptr<ASTNode> val_expr)
+        : address_expr(std::move(addr_expr)), value_expr(std::move(val_expr)) { type = NodeType::MemWrite; }
 };
 
-// Nút cho MEM_READ(addr)
-class MemReadNode : public ASTNode {
-public:
+// Memory Read node: [address_expr] (used in expressions)
+struct MemReadNode : public ASTNode {
     std::unique_ptr<ASTNode> address_expr;
-    explicit MemReadNode(std::unique_ptr<ASTNode> addr)
-        : ASTNode(NodeType::MemRead), address_expr(std::move(addr)) {}
+    MemReadNode(std::unique_ptr<ASTNode> addr_expr)
+        : address_expr(std::move(addr_expr)) { type = NodeType::MemRead; }
 };
 
-// Nút cho PRINT_CHAR(line, column, char_code)
-class PrintCharNode : public ASTNode {
-public:
+// PRINT_CHAR node: PRINT_CHAR(line, column, char_code)
+struct PrintCharNode : public ASTNode {
     std::unique_ptr<ASTNode> line_expr;
     std::unique_ptr<ASTNode> column_expr;
     std::unique_ptr<ASTNode> char_code_expr;
     PrintCharNode(std::unique_ptr<ASTNode> line, std::unique_ptr<ASTNode> col, std::unique_ptr<ASTNode> code)
-        : ASTNode(NodeType::PrintChar), line_expr(std::move(line)), column_expr(std::move(col)), char_code_expr(std::move(code)) {}
+        : line_expr(std::move(line)), column_expr(std::move(col)), char_code_expr(std::move(code)) {
+        type = NodeType::PrintChar;
+    }
 };
 
-
-// --- Symbol Table (Bảng Ký hiệu) ---
-// Ánh xạ tên biến FxLaux đến địa chỉ bộ nhớ NX-U8
+// --- Symbol Table ---
 struct SymbolInfo {
-    int address; // Địa chỉ bắt đầu của biến trong bộ nhớ NX-U8
-    // Có thể thêm kích thước, kiểu dữ liệu, v.v.
+    unsigned int address;
+    // Thêm các thông tin khác nếu cần (ví dụ: kích thước, kiểu dữ liệu)
 };
 
 class SymbolTable {
 public:
     std::map<std::string, SymbolInfo> symbols;
-    int next_available_address = 0x2000; // Địa chỉ bắt đầu cho biến toàn cục (ví dụ)
-    // Casio VRAM là 0x01-0x31 (nhỏ), dùng vùng khác cho biến
-    // Đảm bảo không trùng với VRAM hay các vùng đặc biệt khác của NX-U8
-    int get_next_address(int size_bytes = 2); // Giả sử biến 2 bytes (16-bit)
+    unsigned int next_available_address = 0x2000; // Start variable addresses from 0x2000
+
+    unsigned int get_next_address(unsigned int size_bytes = 2); // Giả định 2 byte cho các biến
 
     void add_symbol(const std::string& name);
-    SymbolInfo* get_symbol(const std::string& name);
+    // Sửa chữa: Thêm 'const' vào kiểu trả về và cuối hàm
+    const SymbolInfo* get_symbol(const std::string& name) const;
 };
 
 
@@ -127,21 +116,26 @@ class Parser {
 public:
     explicit Parser(Lexer& lexer);
     std::unique_ptr<ProgramNode> parse();
-    SymbolTable symbol_table; // Bảng ký hiệu của Parser
 
 private:
     Lexer& lexer;
-    Token current_token;
+    Token current_token; // Sửa chữa: Khởi tạo trong constructor
 
-    void advance();
-    void expect(TokenType type, const std::string& error_msg);
-    std::unique_ptr<ASTNode> parseStatement();
-    std::unique_ptr<ASTNode> parseExpression();
-    std::unique_ptr<ASTNode> parseTerm(); // Xử lý nhân/chia (nếu có)
-    std::unique_ptr<ASTNode> parseFactor(); // Xử lý số, biến, dấu ngoặc
-    std::unique_ptr<ASTNode> parseMemWrite();
-    std::unique_ptr<ASTNode> parseMemRead();
-    std::unique_ptr<ASTNode> parsePrintChar();
+    void advance(); // Move to the next token
+    void expect(TokenType type); // Consume current token and expect next token to be of a certain type
+
+    // Parsing functions for different grammar rules
+    std::unique_ptr<ASTNode> parse_statement();
+    std::unique_ptr<ASTNode> parse_var_declaration();
+    std::unique_ptr<ASTNode> parse_assignment();
+    std::unique_ptr<ASTNode> parse_mem_write();
+    std::unique_ptr<ASTNode> parse_print_char();
+
+    std::unique_ptr<ASTNode> parse_expression();
+    std::unique_ptr<ASTNode> parse_term();     // Handles multiplication and division
+    std::unique_ptr<ASTNode> parse_factor();   // Handles numbers, identifiers, and parentheses, memory reads
+
+    SymbolTable symbol_table; // Symbol table instance
 };
 
 #endif // PARSER_H
