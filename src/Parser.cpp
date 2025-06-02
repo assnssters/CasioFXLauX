@@ -1,153 +1,141 @@
-#include "Parser.h"
-#include <iostream>
-#include <stdexcept> // For std::runtime_error
+#ifndef PARSER_H
+#define PARSER_H
 
-// --- SymbolTable Implementation ---
-int SymbolTable::get_next_address(int size_bytes) {
-    int addr = next_available_address;
-    next_available_address += size_bytes;
-    return addr;
-}
+#include "Lexer.h"
+#include <vector>
+#include <string>
+#include <map>
+#include <memory> // For std::unique_ptr
 
-void SymbolTable::add_symbol(const std::string& name) {
-    if (symbols.count(name)) {
-        std::cerr << "Lỗi ngữ nghĩa: Biến '" << name << "' đã được khai báo." << std::endl;
-        return; // hoặc throw exception
+// --- AST Node Definitions ---
+// Base class for all Abstract Syntax Tree nodes
+struct ASTNode {
+    enum class NodeType {
+        Program,
+        VarDeclaration,
+        Assignment,
+        IntegerLiteral,
+        BinaryOp,
+        Identifier,
+        MemWrite, // New node type for memory write
+        MemRead,  // New node type for memory read
+        PrintChar // New node type for print_char
+    };
+    NodeType type;
+    virtual ~ASTNode() = default;
+};
+
+// Program node (root of the AST)
+struct ProgramNode : public ASTNode {
+    std::vector<std::unique_ptr<ASTNode>> statements;
+    ProgramNode() { type = NodeType::Program; }
+};
+
+// Variable Declaration node
+struct VarDeclarationNode : public ASTNode {
+    std::string var_name;
+    VarDeclarationNode(std::string name) : var_name(std::move(name)) { type = NodeType::VarDeclaration; }
+};
+
+// Assignment node: var_name = expression
+struct AssignmentNode : public ASTNode {
+    std::string var_name;
+    std::unique_ptr<ASTNode> expression;
+    AssignmentNode(std::string name, std::unique_ptr<ASTNode> expr)
+        : var_name(std::move(name)), expression(std::move(expr)) { type = NodeType::Assignment; }
+};
+
+// Integer Literal node (e.g., 10, 255)
+struct IntegerLiteralNode : public ASTNode {
+    unsigned int value;
+    IntegerLiteralNode(unsigned int val) : value(val) { type = NodeType::IntegerLiteral; }
+};
+
+// Binary Operation node (e.g., a + b, x - y)
+struct BinaryOpNode : public ASTNode {
+    TokenType op; // PLUS, MINUS, MULT, DIV
+    std::unique_ptr<ASTNode> left;
+    std::unique_ptr<ASTNode> right;
+    BinaryOpNode(TokenType op_type, std::unique_ptr<ASTNode> l, std::unique_ptr<ASTNode> r)
+        : op(op_type), left(std::move(l)), right(std::move(r)) { type = NodeType::BinaryOp; }
+};
+
+// Identifier node (variable name)
+struct IdentifierNode : public ASTNode {
+    std::string name;
+    IdentifierNode(std::string var_name) : name(std::move(var_name)) { type = NodeType::Identifier; }
+};
+
+// Memory Write node: [address_expr] = value_expr
+struct MemWriteNode : public ASTNode {
+    std::unique_ptr<ASTNode> address_expr;
+    std::unique_ptr<ASTNode> value_expr;
+    MemWriteNode(std::unique_ptr<ASTNode> addr_expr, std::unique_ptr<ASTNode> val_expr)
+        : address_expr(std::move(addr_expr)), value_expr(std::move(val_expr)) { type = NodeType::MemWrite; }
+};
+
+// Memory Read node: [address_expr] (used in expressions)
+struct MemReadNode : public ASTNode {
+    std::unique_ptr<ASTNode> address_expr;
+    MemReadNode(std::unique_ptr<ASTNode> addr_expr)
+        : address_expr(std::move(addr_expr)) { type = NodeType::MemRead; }
+};
+
+// PRINT_CHAR node: PRINT_CHAR(line, column, char_code)
+struct PrintCharNode : public ASTNode {
+    std::unique_ptr<ASTNode> line_expr;
+    std::unique_ptr<ASTNode> column_expr;
+    std::unique_ptr<ASTNode> char_code_expr;
+    PrintCharNode(std::unique_ptr<ASTNode> line, std::unique_ptr<ASTNode> col, std::unique_ptr<ASTNode> code)
+        : line_expr(std::move(line)), column_expr(std::move(col)), char_code_expr(std::move(code)) {
+        type = NodeType::PrintChar;
     }
-    symbols[name] = {get_next_address()};
-    std::cout << "Khai báo biến: '" << name << "' tại địa chỉ 0x" << std::hex << symbols[name].address << std::dec << std::endl;
-}
+};
 
-SymbolInfo* SymbolTable::get_symbol(const std::string& name) {
-    if (symbols.count(name)) {
-        return &symbols[name];
-    }
-    std::cerr << "Lỗi ngữ nghĩa: Biến '" << name << "' chưa được khai báo." << std::endl;
-    return nullptr;
-}
+// --- Symbol Table ---
+struct SymbolInfo {
+    unsigned int address;
+    // Thêm các thông tin khác nếu cần (ví dụ: kích thước, kiểu dữ liệu)
+};
+
+class SymbolTable {
+public:
+    std::map<std::string, SymbolInfo> symbols;
+    unsigned int next_available_address = 0x2000; // Start variable addresses from 0x2000
+
+    unsigned int get_next_address(unsigned int size_bytes = 2); // Giả định 2 byte cho các biến
+
+    void add_symbol(const std::string& name);
+    // Sửa chữa: Thêm 'const' vào kiểu trả về và cuối hàm
+    const SymbolInfo* get_symbol(const std::string& name) const;
+};
 
 
-// --- Parser Implementation ---
-Parser::Parser(Lexer& lexer) : lexer(lexer) {
-    advance(); // Đọc token đầu tiên
-}
+// --- Parser Class ---
+class Parser {
+public:
+    explicit Parser(Lexer& lexer);
+    std::unique_ptr<ProgramNode> parse();
 
-void Parser::advance() {
-    current_token = lexer.getNextToken();
-}
+private:
+    Lexer& lexer;
+    Token current_token; // Sửa chữa: Khởi tạo trong constructor
 
-void Parser::expect(TokenType type, const std::string& error_msg) {
-    if (current_token.type != type) {
-        throw std::runtime_error("Lỗi cú pháp tại dòng " + std::to_string(current_token.line) +
-                                 ", cột " + std::to_string(current_token.column) + ": " +
-                                 error_msg + ". Nhận được '" + current_token.value + "'");
-    }
-    advance();
-}
+    void advance(); // Move to the next token
+    void expect(TokenType type); // Consume current token and expect next token to be of a certain type
 
-std::unique_ptr<ProgramNode> Parser::parse() {
-    auto program_node = std::make_unique<ProgramNode>();
-    while (current_token.type != TokenType::END_OF_FILE) {
-        program_node->statements.push_back(parseStatement());
-    }
-    return program_node;
-}
+    // Parsing functions for different grammar rules
+    std::unique_ptr<ASTNode> parse_statement();
+    std::unique_ptr<ASTNode> parse_var_declaration();
+    std::unique_ptr<ASTNode> parse_assignment();
+    std::unique_ptr<ASTNode> parse_mem_write();
+    std::unique_ptr<ASTNode> parse_print_char();
 
-std::unique_ptr<ASTNode> Parser::parseStatement() {
-    if (current_token.type == TokenType::VAR) {
-        advance(); // Consume VAR
-        expect(TokenType::IDENTIFIER, "Cần tên biến sau VAR");
-        std::string var_name = current_token.value;
-        symbol_table.add_symbol(var_name); // Thêm biến vào bảng ký hiệu
-        advance(); // Consume IDENTIFIER
-        expect(TokenType::SEMICOLON, "Cần ';' sau khai báo biến");
-        return std::make_unique<VarDeclarationNode>(var_name);
-    } else if (current_token.type == TokenType::IDENTIFIER) {
-        std::string var_name = current_token.value;
-        // Kiểm tra biến đã khai báo chưa
-        if (!symbol_table.get_symbol(var_name)) {
-            throw std::runtime_error("Lỗi ngữ nghĩa: Biến '" + var_name + "' chưa được khai báo.");
-        }
-        advance(); // Consume IDENTIFIER
-        expect(TokenType::ASSIGN, "Cần '=' sau tên biến trong lệnh gán");
-        auto expr = parseExpression();
-        expect(TokenType::SEMICOLON, "Cần ';' sau lệnh gán");
-        return std::make_unique<AssignmentNode>(var_name, std::move(expr));
-    } else if (current_token.type == TokenType::MEM_WRITE) {
-        return parseMemWrite();
-    } else if (current_token.type == TokenType::PRINT_CHAR) {
-        return parsePrintChar();
-    }
-    // ... Thêm các loại lệnh khác
-    throw std::runtime_error("Lỗi cú pháp: Lệnh không hợp lệ tại dòng " + std::to_string(current_token.line));
-}
+    std::unique_ptr<ASTNode> parse_expression();
+    std::unique_ptr<ASTNode> parse_term();     // Handles multiplication and division
+    std::unique_ptr<ASTNode> parse_factor();   // Handles numbers, identifiers, and parentheses, memory reads
 
-// Rất đơn giản, chỉ hỗ trợ cộng/trừ. Có thể mở rộng để ưu tiên toán tử
-std::unique_ptr<ASTNode> Parser::parseExpression() {
-    auto left_expr = parseTerm();
-    while (current_token.type == TokenType::PLUS || current_token.type == TokenType::MINUS) {
-        TokenType op_type = current_token.type;
-        advance(); // Consume PLUS/MINUS
-        auto right_expr = parseTerm();
-        left_expr = std::make_unique<BinaryOpNode>(op_type, std::move(left_expr), std::move(right_expr));
-    }
-    return left_expr;
-}
+    SymbolTable symbol_table; // Symbol table instance
+};
 
-std::unique_ptr<ASTNode> Parser::parseTerm() {
-    // Hiện tại chỉ là một placeholder, sẽ là nơi parse nhân/chia nếu có
-    return parseFactor();
-}
-
-std::unique_ptr<ASTNode> Parser::parseFactor() {
-    if (current_token.type == TokenType::INTEGER_LITERAL) {
-        int val = std::stoi(current_token.value);
-        advance(); // Consume INTEGER_LITERAL
-        return std::make_unique<IntegerLiteralNode>(val);
-    } else if (current_token.type == TokenType::IDENTIFIER) {
-        std::string var_name = current_token.value;
-        if (!symbol_table.get_symbol(var_name)) {
-            throw std::runtime_error("Lỗi ngữ nghĩa: Biến '" + var_name + "' chưa được khai báo.");
-        }
-        advance(); // Consume IDENTIFIER
-        return std::make_unique<IdentifierNode>(var_name);
-    } else if (current_token.type == TokenType::LPAREN) {
-        advance(); // Consume (
-        auto expr = parseExpression();
-        expect(TokenType::RPAREN, "Cần ')' sau biểu thức trong dấu ngoặc đơn");
-        return expr;
-    } else if (current_token.type == TokenType::MEM_READ) {
-        advance(); // Consume MEM_READ
-        expect(TokenType::LPAREN, "Cần '(' sau MEM_READ");
-        auto addr_expr = parseExpression();
-        expect(TokenType::RPAREN, "Cần ')' sau địa chỉ trong MEM_READ");
-        return std::make_unique<MemReadNode>(std::move(addr_expr));
-    }
-    // ... Thêm các trường hợp khác
-    throw std::runtime_error("Lỗi cú pháp: Yếu tố không hợp lệ tại dòng " + std::to_string(current_token.line) +
-                             ", cột " + std::to_string(current_token.column) + ". Nhận được '" + current_token.value + "'");
-}
-
-std::unique_ptr<ASTNode> Parser::parseMemWrite() {
-    advance(); // Consume MEM_WRITE
-    expect(TokenType::LPAREN, "Cần '(' sau MEM_WRITE");
-    auto addr_expr = parseExpression();
-    expect(TokenType::COMMA, "Cần ',' sau địa chỉ trong MEM_WRITE");
-    auto value_expr = parseExpression();
-    expect(TokenType::RPAREN, "Cần ')' sau giá trị trong MEM_WRITE");
-    expect(TokenType::SEMICOLON, "Cần ';' sau lệnh MEM_WRITE");
-    return std::make_unique<MemWriteNode>(std::move(addr_expr), std::move(value_expr));
-}
-
-std::unique_ptr<ASTNode> Parser::parsePrintChar() {
-    advance(); // Consume PRINT_CHAR
-    expect(TokenType::LPAREN, "Cần '(' sau PRINT_CHAR");
-    auto line_expr = parseExpression();
-    expect(TokenType::COMMA, "Cần ',' sau dòng trong PRINT_CHAR");
-    auto col_expr = parseExpression();
-    expect(TokenType::COMMA, "Cần ',' sau cột trong PRINT_CHAR");
-    auto char_code_expr = parseExpression();
-    expect(TokenType::RPAREN, "Cần ')' sau mã ký tự trong PRINT_CHAR");
-    expect(TokenType::SEMICOLON, "Cần ';' sau lệnh PRINT_CHAR");
-    return std::make_unique<PrintCharNode>(std::move(line_expr), std::move(col_expr), std::move(char_code_expr));
-}
+#endif // PARSER_H
