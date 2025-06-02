@@ -1,18 +1,18 @@
 #include "ROPGenerator.h"
 #include <iostream>
-#include <stdexcept>
-#include <iomanip> // For std::hex (if you want to print debug info)
+#include <fstream>   // For std::ifstream
+#include <sstream>   // For std::stringstream
+#include <stdexcept> // For std::runtime_error
+#include <iomanip>   // For std::hex, std::dec
 
 // --- GadgetDB Implementation ---
 
 // Constructor để khởi tạo name_to_enum_map
 GadgetDB::GadgetDB() {
-    // Ánh xạ chuỗi tên gadget trong file sang enum GadgetFunction
-    // BẠN CẦN ĐIỀN ĐẦY ĐỦ TẤT CẢ CÁC ÁNH XẠ Ở ĐÂY DỰA TRÊN FILE nx_u8_gadgets.txt CỦA BẠN
-    // Các lỗi bạn gặp liên quan đến việc các gadget như POP_R0_RET không tồn tại.
-    // Dưới đây là các ánh xạ chính xác theo danh sách bạn đã cung cấp trong ROPGenerator.h
+    // Ánh xạ chuỗi tên gadget trong file nx_u8_gadgets.txt sang enum GadgetFunction
+    // Đảm bảo rằng mỗi chuỗi ở đây khớp chính xác với chuỗi sau địa chỉ trong file txt của bạn.
 
-    // Stack/Register manipulation (pop)
+    // Basic stack/register manipulation
     name_to_enum_map["setlr"] = GadgetFunction::SETLR;
     name_to_enum_map["DI,RT"] = GadgetFunction::DI_RT;
     name_to_enum_map["sp = er14,pop er14,rt"] = GadgetFunction::SP_ER14_POP_ER14_RT;
@@ -24,6 +24,8 @@ GadgetDB::GadgetDB() {
     name_to_enum_map["sp = er14,pop qr8,pop er6"] = GadgetFunction::SP_ER14_POP_QR8_POP_ER6;
     name_to_enum_map["er14 = sp,rt"] = GadgetFunction::ER14_SP_RT;
     name_to_enum_map["nop"] = GadgetFunction::NOP;
+
+    // POP gadgets
     name_to_enum_map["pop ea"] = GadgetFunction::POP_EA;
     name_to_enum_map["pop er14,rt"] = GadgetFunction::POP_ER14_RT;
     name_to_enum_map["pop er0,rt"] = GadgetFunction::POP_ER0_RT;
@@ -33,14 +35,14 @@ GadgetDB::GadgetDB() {
     name_to_enum_map["pop er12,rt"] = GadgetFunction::POP_ER12_RT;
     name_to_enum_map["pop qr0"] = GadgetFunction::POP_QR0;
     name_to_enum_map["pop qr8"] = GadgetFunction::POP_QR8;
-    name_to_enum_map["pop r0"] = GadgetFunction::POP_R0; // Đây là POP_R0, không phải POP_R0_RET
+    name_to_enum_map["pop r0"] = GadgetFunction::POP_R0;
     name_to_enum_map["pop r8"] = GadgetFunction::POP_R8;
     name_to_enum_map["pop xr0"] = GadgetFunction::POP_XR0;
     name_to_enum_map["pop xr4"] = GadgetFunction::POP_XR4;
     name_to_enum_map["pop xr8"] = GadgetFunction::POP_XR8;
     name_to_enum_map["pop er10"] = GadgetFunction::POP_ER10;
     name_to_enum_map["pop r12"] = GadgetFunction::POP_R12;
-    name_to_enum_map["pop er0"] = GadgetFunction::POP_ER0; // Đây là POP_ER0, không phải POP_ER0_RT
+    name_to_enum_map["pop er0"] = GadgetFunction::POP_ER0;
     name_to_enum_map["pop er12"] = GadgetFunction::POP_ER12;
     name_to_enum_map["pop er14"] = GadgetFunction::POP_ER14;
     name_to_enum_map["pop er6"] = GadgetFunction::POP_ER6;
@@ -56,7 +58,6 @@ GadgetDB::GadgetDB() {
     name_to_enum_map["pop xr12,rt"] = GadgetFunction::POP_XR12_RT;
     name_to_enum_map["pop xr4,rt"] = GadgetFunction::POP_XR4_RT;
     name_to_enum_map["pop xr8,rt"] = GadgetFunction::POP_XR8_RT;
-
 
     // ADD gadgets
     name_to_enum_map["er0+=er4,rt"] = GadgetFunction::ADD_ER0_ER4_RET;
@@ -75,7 +76,7 @@ GadgetDB::GadgetDB() {
     name_to_enum_map["er0 = er2,rt"] = GadgetFunction::MOV_ER0_ER2_RET;
     name_to_enum_map["er0 = er4,pop er4"] = GadgetFunction::MOV_ER0_ER4_POP_ER4;
     name_to_enum_map["er0 = er8,pop er8,rt"] = GadgetFunction::MOV_ER0_ER8_POP_ER8_RET;
-    name_to_enum_map["er0 = er8"] = GadgetFunction::MOV_ER0_ER8_RET;
+    name_to_enum_map["er0 = er8"] = GadgetFunction::MOV_ER0_ER8_RET; // No ,rt implies it's not a return gadget
     name_to_enum_map["er0 = er6,pop er8,pop xr4"] = GadgetFunction::MOV_ER0_ER6_POP_ER8_POP_XR4;
     name_to_enum_map["er2 = er0,r0 = r4,r1 = 0,pop xr4,rt"] = GadgetFunction::MOV_ER2_ER0_R0_R4_R1_ZERO_POP_XR4_RET;
     name_to_enum_map["r0 = r5,pop er4"] = GadgetFunction::MOV_R0_R5_POP_ER4;
@@ -160,8 +161,24 @@ GadgetDB::GadgetDB() {
     // Divide (DIV) gadgets
     name_to_enum_map["er0/=r2,rt"] = GadgetFunction::DIV_ER0_R2_RET;
 
-    // Control Flow (Jumps/Calls)
+    // BRK gadget
     name_to_enum_map["break"] = GadgetFunction::BRK;
+
+    // Other gadgets
+    name_to_enum_map["[ea]+=1,r0=3"] = GadgetFunction::INC_EA_R0_THREE;
+    name_to_enum_map["[ea]-=1,pop xr4"] = GadgetFunction::DEC_EA_POP_XR4;
+    name_to_enum_map["B LEAVE"] = GadgetFunction::B_LEAVE;
+    name_to_enum_map["calc_checksum_set_f004"] = GadgetFunction::CALC_CHECKSUM_SET_F004;
+    name_to_enum_map["calc_checksum_no_set_f004"] = GadgetFunction::CALC_CHECKSUM_NO_SET_F004;
+    name_to_enum_map["calc_checksum_0"] = GadgetFunction::CALC_CHECKSUM_0;
+    name_to_enum_map["calc_checksum_1"] = GadgetFunction::CALC_CHECKSUM_1;
+    name_to_enum_map["calc_checksum_2"] = GadgetFunction::CALC_CHECKSUM_2;
+    name_to_enum_map["calc_checksum_3"] = GadgetFunction::CALC_CHECKSUM_3;
+    name_to_enum_map["pr_checksum"] = GadgetFunction::PR_CHECKSUM;
+    name_to_enum_map["[er8]+=er2,pop xr8"] = GadgetFunction::ADD_ER8_ER2_POP_XR8;
+
+
+    // BL gadgets (Function calls)
     name_to_enum_map["BL memcpy,pop er0"] = GadgetFunction::BL_MEMCPY_POP_ER0;
     name_to_enum_map["BL strcpy"] = GadgetFunction::BL_STRCPY;
     name_to_enum_map["BL strcat"] = GadgetFunction::BL_STRCAT;
@@ -174,12 +191,8 @@ GadgetDB::GadgetDB() {
     name_to_enum_map["BL zero_KO"] = GadgetFunction::BL_ZERO_KO;
     name_to_enum_map["BL line_draw"] = GadgetFunction::BL_LINE_DRAW;
     name_to_enum_map["BL render.ddd4"] = GadgetFunction::BL_RENDER_DDD4;
-
-    // Other gadgets
-    name_to_enum_map["[ea]+=1,r0=3"] = GadgetFunction::INC_EA_R0_THREE;
-    name_to_enum_map["[ea]-=1,pop xr4"] = GadgetFunction::DEC_EA_POP_XR4;
-    name_to_enum_map["B LEAVE"] = GadgetFunction::B_LEAVE;
 }
+
 
 void GadgetDB::loadFromFile(const std::string& filepath) {
     std::ifstream file(filepath);
@@ -189,17 +202,20 @@ void GadgetDB::loadFromFile(const std::string& filepath) {
 
     std::string line;
     while (std::getline(file, line)) {
+        // Skip empty lines
+        if (line.empty()) continue;
+
         std::stringstream ss(line);
         std::string addr_str;
         std::string func_str_raw;
 
-        // Đọc địa chỉ (chuỗi hex)
+        // Read address (hex string)
         ss >> addr_str;
-        if (addr_str.empty()) continue; // Skip empty lines
+        if (addr_str.empty()) continue; // Should not happen after empty line check, but good for robustness
 
-        // Đọc phần còn lại của dòng là chức năng
+        // Read the rest of the line as the function string
         std::getline(ss, func_str_raw);
-        // Xóa khoảng trắng đầu dòng của func_str_raw (nếu có)
+        // Remove leading whitespace from func_str_raw
         size_t first_char = func_str_raw.find_first_not_of(" \t");
         if (std::string::npos != first_char) {
             func_str_raw = func_str_raw.substr(first_char);
@@ -207,22 +223,26 @@ void GadgetDB::loadFromFile(const std::string& filepath) {
 
         unsigned int addr = std::stoul(addr_str, nullptr, 16);
 
+        // Find in the map that converts string names to enum
         auto it = name_to_enum_map.find(func_str_raw);
         if (it != name_to_enum_map.end()) {
-            gadget_address_map[it->second] = addr; // Sửa lỗi: dùng gadget_address_map
+            gadget_address_map[it->second] = addr; // Assign the address to the corresponding enum
         } else {
-            // std::cerr << "Cảnh báo: Chức năng gadget không xác định trong file: '" << func_str_raw << "'" << std::endl;
-            // Bỏ cảnh báo này để tránh spam nếu bạn chưa điền đủ tất cả các gadget
+            // It's good to keep this warning during development to catch unmapped gadgets.
+            // You can comment it out once all gadgets are mapped.
+            std::cerr << "Cảnh báo: Chức năng gadget không xác định trong file hoặc chưa được ánh xạ trong GadgetDB constructor: '"
+                      << func_str_raw << "' (Địa chỉ: 0x" << std::hex << addr << std::dec << ")" << std::endl;
         }
     }
     std::cout << "Đã tải " << gadget_address_map.size() << " gadget." << std::endl;
 }
 
 unsigned int GadgetDB::getAddress(GadgetFunction func) const {
-    auto it = gadget_address_map.find(func); // Sửa lỗi: dùng gadget_address_map
+    auto it = gadget_address_map.find(func);
     if (it != gadget_address_map.end()) {
         return it->second;
     }
+    // Convert enum to string for better error message if possible, or just print int value
     throw std::runtime_error("Lỗi: Không tìm thấy địa chỉ cho gadget chức năng: " + std::to_string(static_cast<int>(func)));
 }
 
@@ -237,8 +257,7 @@ std::vector<unsigned int> ROPGenerator::generateROPChain(const ProgramNode& prog
         generateForNode(*statement);
     }
 
-    // Kết thúc ROP chain bằng một breakpoint hoặc return từ gadget cuối cùng
-    // Để dễ debug, chúng ta có thể thêm một gadget BRK
+    // End the ROP chain with a breakpoint (BRK) for easier debugging
     pushGadget(GadgetFunction::BRK);
 
     return rop_chain;
@@ -258,113 +277,94 @@ void ROPGenerator::generateForNode(const ASTNode& node) {
         case ASTNode::NodeType::PrintChar:
             generateForPrintChar(static_cast<const PrintCharNode&>(node));
             break;
+        // Add more cases for other statement types as you implement them
         default:
             throw std::runtime_error("Lỗi: Loại ASTNode không được hỗ trợ trong ROP generation.");
     }
 }
 
 void ROPGenerator::generateForVarDeclaration(const VarDeclarationNode& node) {
-    // Với ROP, khai báo biến không sinh ra mã trực tiếp,
-    // mà chỉ cập nhật bảng ký hiệu (đã được Parser xử lý).
-    // Địa chỉ của biến sẽ được sử dụng khi gán hoặc đọc.
+    // Variable declarations in FxLaux primarily update the symbol table.
+    // No direct ROP gadgets are generated for declaration itself.
     std::cout << "DEBUG: Xử lý khai báo biến: " << node.var_name << std::endl;
 }
 
 void ROPGenerator::generateForAssignment(const AssignmentNode& node) {
-    // Sửa lỗi: Dùng const SymbolTable và get_symbol
     const SymbolInfo* sym = symbol_table.get_symbol(node.var_name);
-    if (!sym) throw std::runtime_error("Lỗi: Biến '" + node.var_name + "' chưa khai báo.");
+    if (!sym) {
+        // This check should ideally be done in semantic analysis phase (Parser),
+        // but keeping it here for robustness during ROP generation.
+        throw std::runtime_error("Lỗi: Biến '" + node.var_name + "' chưa khai báo.");
+    }
 
-    // 1. Đánh giá biểu thức bên phải và đưa kết quả vào ER0
-    evaluateExpressionIntoR0(*node.expression); // Đã đổi tên hàm
+    // 1. Evaluate the right-hand side expression into ER0.
+    // After this call, ER0 will contain the value to be assigned.
+    evaluateExpressionIntoR0(*node.expression);
 
-    // 2. Chuẩn bị địa chỉ của biến để lưu giá trị (vào ER1)
-    pushGadget(GadgetFunction::POP_ER1); // Pop địa chỉ vào ER1
+    // 2. Prepare the destination address for the variable.
+    // We need to load the variable's address into a register, say ER1.
+    pushGadget(GadgetFunction::POP_ER1); // Pop the address into ER1
     pushData(sym->address);
 
-    // 3. Thực hiện lưu giá trị từ ER0 vào địa chỉ trong ER1
-    // Giả định chúng ta có một gadget như STORE_ER0_TO_ER1_RET hoặc tương tự
-    // Nếu không có, phải tìm gadget phù hợp nhất (ví dụ: [er0]=er2, [er2]=er0,...)
-    // Ở đây, tôi sẽ dùng STORE_ER0_ER2_RET và MOV ER1 sang ER2
-    pushGadget(GadgetFunction::MOV_ER2_ER1_RET); // ER2 = ER1 (địa chỉ)
-    pushGadget(GadgetFunction::STORE_ER0_ER2_RET); // [ER2] = ER0
-    std::cout << "DEBUG: Sinh mã gán: " << node.var_name << " = expr" << std::endl;
+    // 3. Store the value from ER0 into the address in ER1.
+    // We need a gadget that effectively does `[ER1] = ER0`.
+    // Looking at your gadgets: `STORE_ER0_ER2_RET` is `[er0]=er2,rt`.
+    // This means we need ER0 to hold the destination address and ER2 to hold the value.
+    // Current state: ER0 (value), ER1 (address).
+    // So, we need to swap/move them.
+    pushGadget(GadgetFunction::MOV_ER2_ER0_RET); // ER2 = ER0 (Move value to ER2)
+    pushGadget(GadgetFunction::MOV_ER0_ER1_RET); // ER0 = ER1 (Move address to ER0)
+    pushGadget(GadgetFunction::STORE_ER0_ER2_RET); // Now: [ER0 (address)] = ER2 (value)
+
+    std::cout << "DEBUG: Sinh mã gán: " << node.var_name << " = expr (địa chỉ 0x"
+              << std::hex << sym->address << std::dec << ")" << std::endl;
 }
 
 void ROPGenerator::generateForMemWrite(const MemWriteNode& node) {
-    // 1. Đánh giá giá trị cần ghi và đưa vào ER0
-    evaluateExpressionIntoR0(*node.value_expr); // Giá trị sẽ nằm trong ER0
+    // 1. Evaluate the value to be written into ER0.
+    evaluateExpressionIntoR0(*node.value_expr); // Value will be in ER0
+    pushGadget(GadgetFunction::MOV_ER2_ER0_RET); // Move value to ER2 (temporary storage)
 
-    // 2. Đánh giá địa chỉ đích và đưa vào ER1
-    // Để đơn giản, sẽ đánh giá biểu thức địa chỉ vào ER0, sau đó chuyển ER0 sang ER1
-    // (Lưu ý: Nếu giá trị và địa chỉ được tính bằng cùng một thanh ghi, cần có gadget để lưu tạm thời)
-    unsigned int temp_val = rop_chain.size(); // Lưu vị trí hiện tại để chèn MOV sau
-    pushGadget(GadgetFunction::MOV_ER2_ER0_RET); // ER2 = ER0 (lưu giá trị tạm thời)
+    // 2. Evaluate the destination address into ER0.
+    evaluateExpressionIntoR0(*node.address_expr); // Address will be in ER0
 
-    evaluateExpressionIntoR0(*node.address_expr); // Địa chỉ vào ER0
+    // Current state: ER0 (address), ER2 (value to write).
+    // Our target gadget `STORE_ER0_ER2_RET` (`[er0]=er2,rt`) directly supports this.
+    pushGadget(GadgetFunction::STORE_ER0_ER2_RET); // Store ER2 (value) at [ER0 (address)]
 
-    // Sau khi evaluateExpressionIntoR0 cho địa chỉ, ER0 đang chứa địa chỉ.
-    // ER2 đang chứa giá trị cần ghi.
-    // Chúng ta cần: ER1 = ER0 (địa chỉ) và ER0 = ER2 (giá trị).
-    pushGadget(GadgetFunction::MOV_ER1_ER0_RET); // ER1 = ER0 (address)
-    pushGadget(GadgetFunction::MOV_ER0_ER2_RET); // ER0 = ER2 (value)
-
-    // 3. Ghi giá trị (trong ER0) vào địa chỉ (trong ER1)
-    // Giả định gadget STORE_ER0_ER2_RET ([er0]=er2,rt) có nghĩa là [er0]=er2, không phải [er2]=er0
-    // Cần một gadget [ERX] = ERY. Với danh sách của bạn: STORE_ER0_ER2_RET ([er0]=er2,rt)
-    // Nếu gadget đó là [er0]=er2, thì chúng ta cần ER0 chứa địa chỉ và ER2 chứa giá trị.
-    // Ở đây, ER1 đang chứa địa chỉ và ER0 đang chứa giá trị. Cần swap lại:
-    pushGadget(GadgetFunction::MOV_ER2_ER0_RET); // ER2 = ER0 (value)
-    pushGadget(GadgetFunction::MOV_ER0_ER1_RET); // ER0 = ER1 (address)
-    pushGadget(GadgetFunction::STORE_ER0_ER2_RET); // [ER0] = ER2
-
-    std::cout << "DEBUG: Sinh mã ghi bộ nhớ: [expr] = expr" << std::endl;
+    std::cout << "DEBUG: Sinh mã ghi bộ nhớ: [expr_addr] = expr_val" << std::endl;
 }
 
-
 void ROPGenerator::generateForPrintChar(const PrintCharNode& node) {
-    // Các địa chỉ VRAM Casio fx-9860G:
-    // Dòng 1: 0xD0010 - 0xD001F (16 byte)
-    // Dòng 2: 0xD0020 - 0xD002F
-    // ...
-    // VRAM_Addr = BASE_VRAM_ADDR + (line - 1) * 0x10 + column
+    // Casio fx-9860G VRAM mapping (example assumptions):
+    // Display starts at 0xD0000.
+    // Each character is 1 byte.
+    // Each line is 0x10 bytes long (16 characters wide).
+    // VRAM_Addr = BASE_VRAM_ADDR + (line - 1) * 0x10 + column_offset
 
-    // Để đơn giản, chúng ta sẽ tính địa chỉ và giá trị vào các thanh ghi khác nhau.
-    // Kết quả cuối cùng: ER0 chứa char_code, ER1 chứa VRAM_address
+    // 1. Calculate the character code into ER0.
+    evaluateExpressionIntoR0(*node.char_code_expr); // char_code into ER0
+    pushGadget(GadgetFunction::MOV_ER2_ER0_RET); // Move char_code to ER2 (temporary)
 
-    // 1. Tính toán char_code và đưa vào ER0 (hoặc ER2 tạm thời)
-    evaluateExpressionIntoR0(*node.char_code_expr); // char_code vào ER0
-    pushGadget(GadgetFunction::MOV_ER2_ER0_RET); // ER2 = char_code (lưu tạm)
-
-    // 2. Tính toán địa chỉ VRAM vào ER0
-    // (line - 1) * 0x10 + 0x01 + column
-    
-    // a. Tính line - 1 vào ER0
-    evaluateExpressionIntoR0(*node.line_expr); // line vào ER0
-    pushGadget(GadgetFunction::POP_ER4); // Đẩy 1 vào ER4
+    // 2. Calculate VRAM address into ER0.
+    // Part a: Calculate `(line - 1)` into ER0.
+    evaluateExpressionIntoR0(*node.line_expr); // 'line' value into ER0
+    pushGadget(GadgetFunction::POP_ER4);      // Pop 1 into ER4
     pushData(1);
     pushGadget(GadgetFunction::SUB_ER0_ER4_RET); // ER0 = ER0 - ER4 (line - 1)
 
-    // b. (line - 1) * 0x10 (tức là dịch trái 4 bit) vào ER0
+    // Part b: Multiply `(line - 1)` by 0x10 (i.e., left shift by 4 bits) into ER0.
     pushGadget(GadgetFunction::SLL_ER0_4_RET); // ER0 = ER0 << 4
 
-    // c. Cộng 0x01 (base offset cho cột đầu tiên) vào ER0
-    pushGadget(GadgetFunction::POP_ER4); // Đẩy 0x01 vào ER4
-    pushData(0x01);
-    pushGadget(GadgetFunction::ADD_ER0_ER4_RET); // ER0 = ER0 + ER4
+    // Part c: Add 'column' value to ER0.
+    // Need to save current ER0 (line_offset) temporarily, calculate column, then add.
+    pushGadget(GadgetFunction::MOV_ER8_ER0_RET); // Save (line_offset) to ER8
 
-    // d. Cộng column vào ER0
-    pushGadget(GadgetFunction::POP_ER4); // Đẩy giá trị column vào ER4
-    evaluateExpressionIntoR0(*node.column_expr); // column vào ER0
-    pushGadget(GadgetFunction::MOV_ER4_ER0_RET); // ER4 = ER0 (column)
-    pushGadget(GadgetFunction::ADD_ER0_ER4_RET); // ER0 = ER0 + ER4 (tổng đã có VRAM_address trong ER0)
+    evaluateExpressionIntoR0(*node.column_expr); // 'column' value into ER0
 
-    // e. Thêm base VRAM address (0xD0000) vào ER0
-    // Cần một gadget để pop 0xD0000 vào một thanh ghi khác (ví dụ ER4), rồi cộng vào ER0
-    pushGadget(GadgetFunction::POP_ER4); // Pop base VRAM address vào ER4
-    pushData(0xD0000); // Base VRAM address
-    pushGadget(GadgetFunction::ADD_ER0_ER4_RET); // ER0 = ER0 + ER4 (VRAM_address cuối cùng trong ER0)
+    // Add saved line_offset (in ER8) to current ER0 (column)
+    pushGadget(GadgetFunction::MOV_ER4_ER0_RET); // Move column to ER4
+    pushGadget(GadgetFunction::MOV_ER0_ER8_RET); // Move line_offset from ER8 to ER0
+    pushGadget(GadgetFunction::ADD_ER0_ER4_RET); // ER0 = ER0 + ER4 (now ER0 has line_offset + column)
 
-    // 3. Di chuyển VRAM_address từ ER0 sang ER1, và char_code từ ER2 về ER0
-    pushGadget(GadgetFunction::MOV_ER1_ER0_RET); // ER1 = ER0 (VRAM_address)
-  
+    // 
